@@ -3,80 +3,165 @@
 # the 'Run App' button above.
 #
 # Find out more about building applications with Shiny here:
-#
-#    https://shiny.posit.co/
-#
-library(shiny)
 
-# Veritabanı bağlantısını oluştur
+# Gerekli kütüphaneleri yükle
+library(shiny)
 library(DBI)
 library(RSQLite)
+library(openxlsx)
+
+# Veritabanı bağlantısını oluştur
 con <- dbConnect(RSQLite::SQLite(), "my_database.db")
 
-# Define UI for application
+# UI tanımı
 ui <- fluidPage(
-  titlePanel("Fosil Veritabanı"),
-  
+  titlePanel("Fossil Database"),
   sidebarLayout(
     sidebarPanel(
-      textInput("species", "Fosil Türü:"),
-      numericInput("age", "Yaş:", value = NULL),
-      textInput("location", "Konum:"),
-      actionButton("submit", "Kayıt Ekle")
+      textInput("species", "Species:"),
+      textInput("country", "Country:"),
+      textInput("site", "Site:"),
+      numericInput("latitude", "Latitude:", value = NULL),
+      numericInput("longitude", "Longitude:", value = NULL),
+      textInput("date", "Date:"),
+      textInput("dating_method", "Dating Method:"),
+      textInput("calibrated_dating_range", "Calibrated Dating Range:"),
+      numericInput("lower_dating_interval_BC", "Lower Dating Interval BC:", value = NULL),
+      numericInput("upper_dating_interval_BC", "Upper Dating Interval BC:", value = NULL),
+      textInput("reference", "Reference:"),
+      textInput("comments", "Comments:"),
+      textInput("data_source", "Data Source:"),
+      actionButton("submit", "Add Record"),
+      br(),
+      textInput("search", "Search:"),
+      actionButton("search_button", "Search"),
+      br(),
+      fileInput("file", "CSV File:", accept = ".csv"),  # Dosya yükleme alanı
+      br(),
+      downloadButton("download_template", "Download Template"),  # Taslak indirme butonu
+      br(),
+      downloadButton("download", "Download Results")
     ),
-    
     mainPanel(
       br(),
-      h3("Fosil Kayıtları"),
-      tableOutput("fossil_table"),
+      h3("Recently Added Records"),
+      tableOutput("recent_fossils"),
       br(),
-      textInput("search", "Arama:"),
-      actionButton("search_button", "Ara"),
-      downloadButton("download", "Sonuçları İndir")
+      h3("Search Results"),
+      tableOutput("search_result_table")
     )
   )
 )
 
-
-# Define server logic
-server <- function(input, output) {
+# Server tanımı
+server <- function(input, output, session) {
   
-  #Creating table query 
-  create_table_query <- "
-    CREATE TABLE IF NOT EXISTS fossils (
-      id INTEGER PRIMARY KEY,
-      species TEXT,
-      age INTEGER,
-      location TEXT
-    )
-  "
+  # Taslak indirme işlevi
+  output$download_template <- downloadHandler(
+    filename = function() {
+      "Fossil_Data_Template.xlsx"
+    },
+    content = function(file) {
+      # Template dosyasını oluştur
+      wb <- createWorkbook()
+      addWorksheet(wb, "Fossil_Data")
+      
+      # Değişken başlıklarını tanımla
+      titles <- c("Species", "Country", "Site", "Latitude", "Longitude", 
+                  "Date", "Dating_method", "Calibrated_Dating_range", 
+                  "Lower_dating_interval_BC", "Upper_dating_interval_BC", 
+                  "Reference", "Comments", "Data_Source")
+      # Veri çerçevesi oluştur
+      empty_data <- data.frame(matrix(nrow = 0, ncol = length(titles)))
+      colnames(empty_data) <- titles
+      
+      # Template dosyasına veri çerçevesini yaz
+      writeData(wb, "Fossil_Data", x = empty_data, startCol = 1, startRow = 1)
+      
+      # Template dosyasını kaydet
+      saveWorkbook(wb, file = file, overwrite = TRUE)
+    }
+  )
   
-  # Working query 
-  dbExecute(con, create_table_query)
+  # Dosya yükleme işlemini gerçekleştir
+  observeEvent(input$file, {
+    req(input$file) # Dosya yükleme işlemi başlatıldığında çalışır
+    
+    # Seçilen dosyayı bir veri çerçevesine oku
+    data <- read.csv(input$file$datapath, header = TRUE, stringsAsFactors = FALSE)
+    
+    # Veriyi veritabanına yükle
+    dbWriteTable(con, "fossils", data, append = TRUE, row.names = FALSE)
+    
+    # Kullanıcıya yükleme tamamlandı mesajını göster
+    showNotification("CSV file successfully uploaded.", duration = 5)
+  })
+  
+  # Eklenen son 20 kaydı göster
+  output$recent_fossils <- renderTable({
+    recent_data <- dbGetQuery(con, "SELECT * FROM fossils ORDER BY SampleID DESC LIMIT 20")
+    recent_data
+  })
+  
+  # Arama sonuçlarını göster
+  output$search_result_table <- renderTable({
+    req(input$search_button)  # Arama düğmesine basıldığında çalıştır
+    if (!is.null(input$search) && input$search_button > 0) {
+      if (nchar(input$search) > 0) {
+        search_query <- paste0("SELECT * FROM fossils WHERE Species LIKE '%", input$search, "%'")
+        searched_data <- dbGetQuery(con, search_query)
+        searched_data
+      } else {
+        NULL  # Boş bir sorgu kutusu durumunda hiçbir şey göster
+      }
+    }
+  })
+  
+  # Sorgu kutusunu izleme
+  observeEvent(input$search, {
+    if (!is.null(input$search) && nchar(input$search) == 0) {
+      output$search_result_table <- renderTable({
+        NULL  # Sorgu kutusu boşsa hiçbir şey göster
+      })
+    }
+  })
+  
+  # Sorgu işlevi
+  observeEvent(input$search_button, {
+    output$search_result_table <- renderTable({
+      req(input$search_button)  # Arama düğmesine basıldığında çalıştır
+      if (nchar(input$search) == 0) {
+        NULL  # Boş bir sorgu kutusu durumunda hiçbir şey göster
+      } else {
+        search_query <- paste0("SELECT * FROM fossils WHERE Species LIKE '%", input$search, "%'")
+        searched_data <- dbGetQuery(con, search_query)
+        searched_data
+      }
+    })
+  })
   
   # Kayıt ekleme işlevi
   observeEvent(input$submit, {
     species <- input$species
-    age <- input$age
-    location <- input$location
+    country <- input$country
+    site <- input$site
+    latitude <- input$latitude
+    longitude <- input$longitude
+    date <- input$date
+    dating_method <- input$dating_method
+    calibrated_dating_range <- input$calibrated_dating_range
+    lower_dating_interval_BC <- input$lower_dating_interval_BC
+    upper_dating_interval_BC <- input$upper_dating_interval_BC
+    reference <- input$reference
+    comments <- input$comments
+    data_source <- input$data_source
     
     # Kaydı veritabanına ekle
-    dbExecute(con, "INSERT INTO fossils (species, age, location) VALUES (?, ?, ?)", 
-              params = list(species, age, location))
-  })
-  
-  # Fosil kayıtlarını gösterme işlevi
-  output$fossil_table <- renderTable({
-    dbGetQuery(con, "SELECT * FROM fossils")
-  })
-  
-  # Arama işlevi
-  observeEvent(input$search_button, {
-    search_query <- paste0("SELECT * FROM fossils WHERE species LIKE '%", input$search, "%'")
-    searched_data <- dbGetQuery(con, search_query)
-    output$fossil_table <- renderTable({
-      searched_data
-    })
+    dbExecute(con, "INSERT INTO fossils (Species, Country, Site, Latitude, Longitude, Date, Dating_method, Calibrated_Dating_range, Lower_dating_interval_BC, Upper_dating_interval_BC, Reference, Comments, Data_Source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", 
+              params = list(species, country, site, latitude, longitude, date, dating_method, calibrated_dating_range, lower_dating_interval_BC, upper_dating_interval_BC, reference, comments, data_source))
+    
+    # Durum raporu göster
+    showNotification("Record successfully added.", duration = 5)
   })
   
   # Sonuçları indirme işlevi
@@ -85,10 +170,10 @@ server <- function(input, output) {
       paste("fossil_search_results", ".csv", sep = "")
     },
     content = function(file) {
-      write.csv(dbGetQuery(con, "SELECT * FROM fossils"), file)
+      write.csv(dbGetQuery(con, "SELECT * FROM fossils"), file, fileEncoding = "UTF-8")
     }
   )
 }
 
-# Run the application 
+# Uygulamayı çalıştır
 shinyApp(ui = ui, server = server)

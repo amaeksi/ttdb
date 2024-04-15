@@ -5,6 +5,7 @@
 # Find out more about building applications with Shiny here:
 
 # Gerekli kütüphaneleri yükle
+# Gerekli kütüphaneleri yükle
 library(shiny)
 library(DBI)
 library(RSQLite)
@@ -44,44 +45,27 @@ ui <- fluidPage(
     ),
     mainPanel(
       br(),
-      h3("Recently Added Records"),
-      tableOutput("recent_fossils"),
-      br(),
-      h3("Search Results"),
-      tableOutput("search_result_table")
+      tabsetPanel(
+        tabPanel("Recently Added Records", 
+                 h3("Recently Added Records"),
+                 tableOutput("recent_fossils")),
+        tabPanel("Search Results", 
+                 h3("Search Results"),
+                 tableOutput("search_result_table"))
+      )
     )
   )
 )
 
+
 # Server tanımı
 server <- function(input, output, session) {
   
-  # Taslak indirme işlevi
-  output$download_template <- downloadHandler(
-    filename = function() {
-      "Fossil_Data_Template.xlsx"
-    },
-    content = function(file) {
-      # Template dosyasını oluştur
-      wb <- createWorkbook()
-      addWorksheet(wb, "Fossil_Data")
-      
-      # Değişken başlıklarını tanımla
-      titles <- c("Species", "Country", "Site", "Latitude", "Longitude", 
-                  "Date", "Dating_method", "Calibrated_Dating_range", 
-                  "Lower_dating_interval_BC", "Upper_dating_interval_BC", 
-                  "Reference", "Comments", "Data_Source")
-      # Veri çerçevesi oluştur
-      empty_data <- data.frame(matrix(nrow = 0, ncol = length(titles)))
-      colnames(empty_data) <- titles
-      
-      # Template dosyasına veri çerçevesini yaz
-      writeData(wb, "Fossil_Data", x = empty_data, startCol = 1, startRow = 1)
-      
-      # Template dosyasını kaydet
-      saveWorkbook(wb, file = file, overwrite = TRUE)
-    }
-  )
+  # Veritabanındaki verileri yükle
+  output$recent_fossils <- renderTable({
+    recent_data <- dbGetQuery(con, "SELECT * FROM fossils ORDER BY SampleID DESC LIMIT 20")
+    recent_data
+  })
   
   # Dosya yükleme işlemini gerçekleştir
   observeEvent(input$file, {
@@ -95,12 +79,12 @@ server <- function(input, output, session) {
     
     # Kullanıcıya yükleme tamamlandı mesajını göster
     showNotification("CSV file successfully uploaded.", duration = 5)
-  })
-  
-  # Eklenen son 20 kaydı göster
-  output$recent_fossils <- renderTable({
-    recent_data <- dbGetQuery(con, "SELECT * FROM fossils ORDER BY SampleID DESC LIMIT 20")
-    recent_data
+    
+    # Veritabanındaki verileri yeniden yükle
+    output$recent_fossils <- renderTable({
+      recent_data <- dbGetQuery(con, "SELECT * FROM fossils ORDER BY SampleID DESC LIMIT 20")
+      recent_data
+    })
   })
   
   # Arama sonuçlarını göster
@@ -162,6 +146,12 @@ server <- function(input, output, session) {
     
     # Durum raporu göster
     showNotification("Record successfully added.", duration = 5)
+    
+    # Veritabanındaki verileri yeniden yükle
+    output$recent_fossils <- renderTable({
+      recent_data <- dbGetQuery(con, "SELECT * FROM fossils ORDER BY SampleID DESC LIMIT 20")
+      recent_data
+    })
   })
   
   # Sonuçları indirme işlevi
